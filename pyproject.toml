@@ -1,7 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "panel-oaxaca"
+name = "panel_oaxaca"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.14"
+description = "A short description"
+requires-python = ">=3.10"
 dependencies = []
+
+[tool.setuptools]
+packages = ['panel_oaxaca']
+[tool.setuptools.package-dir]
+panel_oaxaca = '.'
