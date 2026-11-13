@@ -17,7 +17,6 @@ __all__ = [
     "calc_means",
     "calc_coefficients",
     "detail_names",
-    "spec_from_res",
     "get_model_method",
     "_to_list",
     "_refmat",
@@ -26,50 +25,12 @@ __all__ = [
 _TERM_RE = re.compile(r"C\(([^,)]+)(?:,[^)]*)?\)\[T\.([^\]]+)\]")
 _CALL_RE = re.compile(r"C\(([^,)]+)(?:,[^)]*)?\)")
 
-# Regexes matching patsy factor prefixes (like Stata i./c. prefixes)
+# Regexes matching patsy factor prefixes
 _FACT_PREFIX = re.compile(r"^(i|ib|mi|b)\.(.+)$", re.S)
 _CLIST_PREFIX = re.compile(r"^(c|i)\.\((.*)\)$", re.S)
 
-# Patsy parameter name patterns (from old model.py)
-_PTS_C_T = re.compile(r"^C\(([^\(\)]+)\)\[T\.(.+)$")
+# Patsy parameter name patterns
 _PTS_C = re.compile(r"^C\(([^\(\)]+)\)$")
-
-
-def _split_patsy_products(rhs):
-    """Top-level ``+`` products of a patsy RHS (``*``/``:``/``+`` kept)."""
-    out, depth, cur = [], 0, ""
-    for ch in rhs:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        if ch == "+" and depth == 0:
-            out.append(cur.strip())
-            cur = ""
-        else:
-            cur += ch
-    if cur.strip():
-        out.append(cur.strip())
-    return [p for p in out if p and p not in ("1", "const", "Intercept")]
-
-
-def _split_terms(rhs):
-    """Split a Stata‑style RHS on top-level '+'."""
-    terms, depth, cur = [], 0, ""
-    for ch in rhs:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        if ch == "+" and depth == 0:
-            terms.append(cur.strip())
-            cur = ""
-        else:
-            cur += ch
-    if cur.strip():
-        terms.append(cur.strip())
-    return [t for t in terms if t]
-
 
 CITATIONS = {
     "interventionist": (
@@ -115,12 +76,20 @@ CITATIONS = {
 
 CHANGE_COMP_LABELS = {
     "interventionist": [
-        ("dE", "Endowments"),
-        ("dC", "Coefficients"),
-        ("dCE", "Interactions"),
+        ("delta_E", "Endowments"),
+        ("delta_C", "Coefficients"),
+        ("delta_CE", "Interactions"),
     ],
-    "hartmann": [("dE", "Endowments"), ("dC", "Coefficients"), ("dCE", "Interactions")],
-    "ssm": [("dE", "Endowments"), ("dC", "Coefficients"), ("dCE", "Interactions")],
+    "hartmann": [
+        ("delta_E", "Endowments"),
+        ("delta_C", "Coefficients"),
+        ("delta_CE", "Interactions"),
+    ],
+    "ssm": [
+        ("delta_E", "Endowments"),
+        ("delta_C", "Coefficients"),
+        ("delta_CE", "Interactions"),
+    ],
     "kim": [
         ("kim_D1m", "D1"),
         ("kim_D2m", "D2"),
@@ -128,180 +97,21 @@ CHANGE_COMP_LABELS = {
         ("kim_D4m", "D4"),
         ("kim_D5m", "D5"),
     ],
-    "smithwelch": [("i", "i"), ("ii", "ii"), ("iii", "iii"), ("iv", "iv")],
+    "smithwelch": [("sw_1", "i"), ("sw_2", "ii"), ("sw_3", "iii"), ("sw_4", "iv")],
     "mpjd": [
-        ("E_pure", "Explained: pure"),
-        ("E_price", "Explained: price"),
-        ("E_total", "Explained: total"),
-        ("U_pure", "Unexplained: pure"),
-        ("U_price", "Unexplained: price"),
-        ("U_total", "Unexplained: total"),
+        ("endowment_pure", "E-pure"),
+        ("endowment_price", "E-price"),
+        ("endowment_total", "E-total"),
+        ("coefficient_pure", "U-pure"),
+        ("coefficient_price", "U-price"),
+        ("coefficient_total", "U-total"),
     ],
-    "wellington": [("w1", "1"), ("w2", "2")],
-    "interventionist_twofold": [("dE", "Endowments"), ("dU", "Unexplained")],
+    "wellington": [("wl_1", "w1"), ("wl_2", "w2")],
+    "interventionist_twofold": [
+        ("delta_endowment", "Endowments"),
+        ("delta_coefficient", "Unexplained"),
+    ],
 }
-
-##################################
-#                                #
-# Forumla scpecification handler #
-#                                #
-##################################
-
-
-def spec_from_res(model, df: pd.DataFrame) -> SimpleNamespace:
-    factors, numerics = [], []
-    seen_f, seen_n = set(), set()
-
-    for p in map(str, model.params.index):
-        p = p.strip()
-        if p in ("Intercept", "const"):
-            continue
-        for term in p.split(":"):
-            term = term.strip()
-            m = _TERM_RE.fullmatch(term)
-            if m:
-                v = m.group(1)
-                if v not in seen_f:
-                    seen_f.add(v)
-                    factors.append(v)
-            elif term not in seen_n:
-                seen_n.add(term)
-                numerics.append(term)
-
-    if not factors and not numerics:
-        return SimpleNamespace(factor_levels={}, references={}, numeric=[])
-
-    di = dmatrix(
-        model.model.formula.split("~")[1], df, return_type="dataframe"
-    ).design_info
-
-    factor_levels, references = {}, {}
-    for factor, info in di.factor_infos.items():
-        if info.type != "categorical":
-            continue
-        m = _CALL_RE.match(factor.code)
-        var = m.group(1) if m else factor.code
-        levels = list(info.categories)
-        ref = levels[0]
-        references[var] = ref
-        factor_levels[var] = [ref] + [l for l in levels if l != ref]
-
-    return SimpleNamespace(
-        factor_levels=factor_levels,
-        references=references,
-        numeric=numerics,
-    )
-
-
-def detail_names(varlist: list, spec) -> List[str]:
-    names = []
-    for v in varlist:
-        if v in spec.factor_levels:
-            lv = spec.factor_levels[v]
-            ref = spec.references[v]
-            ordered = [ref] + [l for l in lv if l != ref]
-            for l in ordered:
-                names.append(f"{l}.{v}")
-        else:
-            names.append(v)
-    return names
-
-
-def detail_spec(varlist: List[str], spec) -> List[Tuple[str, str | None]]:
-    out = []
-    for v in varlist:
-        if v in spec.factor_levels:
-            ref = spec.references[v]
-            ordered = [ref] + [l for l in spec.factor_levels[v] if l != ref]
-            for l in ordered:
-                out.append((v, l))
-        else:
-            out.append((v, None))
-    return out
-
-
-def partial(spec, param_names, params, var: str, point: dict, level=None) -> float:
-    params = np.asarray(params, dtype=float)
-
-    # ---- factor case -------------------------------------------------------
-    if var in spec.factor_levels:
-        if level is None:
-            raise ValueError(f"factor variable {var!r}: partial() needs level=")
-        if level == spec.references[var]:
-            return 0.0
-
-        dummy_tag = f"C({var})[T.{level}]"
-        acc = 0.0
-        for name, beta in zip(map(str, param_names), params):
-            if name in ("Intercept", "const"):
-                continue
-            parts = [p.strip() for p in name.split(":")]
-            if dummy_tag not in parts:
-                continue
-
-            weight = 1.0
-            for part in parts:
-                if part == dummy_tag:
-                    continue
-                m = _TERM_RE.fullmatch(part)
-                if m:
-                    pvar, plevel = m.group(1), m.group(2)
-                    pval = point.get(pvar, spec.references[pvar])
-                    weight *= 1.0 if str(pval) == str(plevel) else 0.0
-                else:
-                    weight *= float(point.get(part, 0.0))
-            acc += beta * weight
-        return float(acc)
-
-    # ---- continuous case ---------------------------------------------------
-    if var not in spec.numeric:
-        raise ValueError(f"{var!r} is neither a factor nor a numeric term")
-
-    acc = 0.0
-    for name, beta in zip(map(str, param_names), params):
-        if name in ("Intercept", "const"):
-            continue
-        parts = [p.strip() for p in name.split(":")]
-        if var not in parts:
-            continue
-        weight = 1.0
-        for part in parts:
-            if part == var:
-                continue
-            m = _TERM_RE.fullmatch(part)
-            if m:
-                pvar, plevel = m.group(1), m.group(2)
-                pval = point.get(pvar, spec.references[pvar])
-                weight *= 1.0 if str(pval) == str(plevel) else 0.0
-            else:
-                weight *= float(point.get(part, 0.0))
-        acc += beta * weight
-    return float(acc)
-
-
-def predict_at(spec, param_names, params, point: dict) -> float:
-    params = np.asarray(params, dtype=float)
-    acc = 0.0
-
-    for name, beta in zip(map(str, param_names), params):
-        if name in ("Intercept", "const"):
-            acc += beta
-            continue
-        value = 1.0
-        for part in (p.strip() for p in name.split(":")):
-            m = _TERM_RE.fullmatch(part)
-            if m:
-                pvar, plevel = m.group(1), m.group(2)
-                pval = point.get(pvar, spec.references[pvar])
-                if str(pval) != str(plevel):
-                    value = 0.0
-                    break
-            else:
-                value *= float(point.get(part, 0.0))
-
-        acc += beta * value
-
-    return float(acc)
 
 
 ##################################
@@ -459,7 +269,7 @@ def calc_coefficients(
     mA = meansA[:n]
     mB = meansB[:n]
 
-    def _coefs(cat: str, model_m, mg: np.ndarray) -> np.ndarray:
+    def _coefs(cat: str, model, mg: np.ndarray) -> np.ndarray:
         out = np.zeros((T, n + 1))
         for j, t in enumerate(times):
             point = {time_var: t, groupvar: cat}
@@ -491,14 +301,14 @@ def calc_coefficients(
                         point.setdefault(raw, spec.references[raw])
             for i, (raw, level) in enumerate(det):
                 if level is None:
-                    out[j, i] = model_m.partial(df, raw, point, level=None)
+                    out[j, i] = model.partial(df=df, var=raw, point=point, level=None)
                 else:
-                    out[j, i] = model_m.partial(df, raw, point, level=level)
+                    out[j, i] = model.partial(df=df, var=raw, point=point, level=level)
             p0 = {time_var: t, groupvar: cat}
             p0.update(at_means)
             for raw, level in det:
                 p0[raw] = spec.references[raw] if level is not None else 0.0
-            out[j, n] = model_m.predict_at(point=p0, df=df)
+            out[j, n] = model.predict_at(point=p0, df=df)
         return out
 
     coefsA = _coefs(A, model, mA)
@@ -515,7 +325,7 @@ def calc_coefficients(
 ##################################
 
 
-def _to_list(x):
+def _to_list(x) -> List[str]:
     if x is None:
         return None
     if isinstance(x, (list, tuple, np.ndarray)):
@@ -532,86 +342,22 @@ def get_model_method(model_res) -> str:
     return method
 
 
-def _unit_stats(df, ivar):
+def _unit_stats(df: pd.DataFrame, ivar: str) -> Tuple[np.ndarray, np.ndarray]:
     codes, uniques = pd.factorize(df[ivar].to_numpy())
     cnt = np.bincount(codes).astype(float)
     return codes, cnt
 
 
-def design_rows(df, param_names):
-    param_names = [str(p).strip() for p in param_names]
-    n = len(df)
-    X = np.zeros((n, len(param_names)), dtype=float)
-
-    for j, name in enumerate(param_names):
-        if name in ("Intercept", "const"):
-            X[:, j] = 1.0
-            continue
-
-        v = np.ones(n, dtype=float)
-        for part in (p.strip() for p in name.split(":")):
-            m = _TERM_RE.fullmatch(part)
-            if m:
-                var, level = m.group(1), m.group(2)
-                raw = df[var].to_numpy()
-                v *= np.array(
-                    [1.0 if str(x) == level else 0.0 for x in raw],
-                    dtype=float,
-                )
-            else:
-                v *= df[part].to_numpy(dtype=float)
-        X[:, j] = v
-    return X
-
-
-def params_from_result(res, spec, param_names=None):
-    index = list(map(str, res.params.index))
-    if param_names is None:
-        param_names = index
-
-    for name in index:
-        if name in ["Intercept", "1", "const"]:
-            continue
-        for part in (p.strip() for p in name.split(":") if p.strip()):
-            m = _TERM_RE.fullmatch(part)
-            if m:
-                var = m.group(1)
-                if var not in spec.factor_levels:
-                    raise ValueError(
-                        f"params_from_result: factor {var!r} in {name!r} "
-                        f"is not in spec.factor_levels"
-                    )
-            else:
-                if part not in spec.numeric:
-                    raise ValueError(
-                        f"params_from_result: numeric term {part!r} in "
-                        f"{name!r} is not in spec.numeric"
-                    )
-
-    pos = {n: j for j, n in enumerate(param_names)}
-    params = np.zeros(len(param_names), dtype=float)
-
-    for name, val in res.params.items():
-        name = str(name).strip()
-        j = pos.get(name)
-        if j is None:
-            raise ValueError(
-                f"params_from_result: cannot map parameter {name!r} "
-                f"onto the supplied param_names"
-            )
-        params[j] = float(val)
-
-    missing = [
-        n
-        for j, n in enumerate(param_names)
-        if params[j] == 0.0 and n not in res.params.index
-    ]
-    if missing:
-        raise ValueError(f"params_from_result: no coefficient for {missing!r}")
-    return params
-
-
-def re_mean(reffects, df, groupvar, time_var, cat, time, bandwidth, touse=None):
+def re_mean(
+    reffects: np.ndarray,
+    df: pd.DataFrame,
+    groupvar: str,
+    time_var: str,
+    cat: str,
+    time: int,
+    bandwidth: float,
+    touse=None,
+) -> float:
     if reffects is None or groupvar is None:
         return 0.0
 
@@ -625,47 +371,18 @@ def re_mean(reffects, df, groupvar, time_var, cat, time, bandwidth, touse=None):
     return float(np.mean(vals)) if len(vals) else 0.0
 
 
-def _refmat(df, _id_var, _time_var, model, basemodel, groupcat, times, bandwidth):
+def _refmat(
+    df: pd.DataFrame,
+    _id_var: str,
+    _time_var: str,
+    model: PanelRegressionResults,
+    basemodel: PanelRegressionResults,
+    groupcat: str,
+    times: List[int],
+    bandwidth: float,
+) -> np.ndarray:
     flat = df.reset_index() if isinstance(df.index, pd.MultiIndex) else df
-
-    reffects = None
-
-    spec = spec_from_res(df=df, model=model)
-
-    params = params_from_result(res=model, spec=spec)
-    ivar = list(model.model.exog.index.names)[0]
-    odes, cnt = _unit_stats(flat, ivar)
-    method = get_model_method(model)
-    if method == "re":
-        vd = model.variance_decomposition
-        su2 = float(vd["Effects"])
-        se2 = float(vd["Residual"])
-        rho2 = su2 / (su2 + se2) if su2 > 0 else 0.0
-        codes, cnt = _unit_stats(flat, ivar)
-        y = flat[model.model.formula.split("~")[0].strip()].to_numpy(dtype=float)
-        ybar = np.zeros(len(cnt))
-        np.add.at(ybar, codes, y)
-        ybar /= cnt
-        X = design_rows(df, model.params.index.tolist())  # X = spec.design_rows(flat)
-        Xbar = np.zeros((len(cnt), X.shape[1]))
-        for j in range(X.shape[1]):
-            np.add.at(Xbar[:, j], codes, X[:, j])
-        Xbar /= cnt[:, None]
-        uib = ybar - Xbar @ params
-        c = cnt * rho2 / np.maximum(1e-9, 1.0 - rho2 + cnt * rho2)
-        reffects = (c * uib)[codes]
-    elif method == "fe":
-        codes, cnt = _unit_stats(flat, ivar)
-        y = flat[model.model.formula.split("~")[0].strip()].to_numpy(dtype=float)
-        ybar = np.zeros(len(cnt))
-        np.add.at(ybar, codes, y)
-        ybar /= cnt
-        X = design_rows(df, model.params.index.tolist())  # X = spec.design_rows(flat)
-        Xbar = np.zeros((len(cnt), X.shape[1]))
-        for j in range(X.shape[1]):
-            np.add.at(Xbar[:, j], codes, X[:, j])
-        Xbar /= cnt[:, None]
-        reffects = (ybar - Xbar @ params)[codes]
+    reffects = model.reffects(df=flat)
 
     T = len(times)
     g0, g1 = groupcat
@@ -673,9 +390,6 @@ def _refmat(df, _id_var, _time_var, model, basemodel, groupcat, times, bandwidth
     for i, m in enumerate((basemodel if basemodel is not None else model, model)):
         if get_model_method(m) in ("re", "mixed") and reffects is not None:
             for t in range(T):
-                # out[i, t] = m.re_mean(g0, times[t], bandwidth) - m.re_mean(
-                #     g1, times[t], bandwidth
-                # )
                 out[i, t] = re_mean(
                     reffects=reffects,
                     df=df,
@@ -703,9 +417,9 @@ def _colname(detail_name: str) -> str:
     return detail_name
 
 
-def _leaf_keys(ch: list, cname: str) -> list:
+def _leaf_keys(ch: dict, cname: str) -> list:
     if cname == "mpjd":
-        return [k for k in ("E_total", "U_total") if k in ch]
+        return [k for k in ("endowment_total", "coefficient_total") if k in ch]
     return [
         k for k in ch if not k.startswith("perc_") and k not in ("RE", "coefs_star")
     ]
@@ -718,6 +432,74 @@ def _trunc(label: str) -> str:
 def _timestr(f: float) -> str:
     f = float(f)
     return str(int(f)) if f == int(f) else ("%g" % f)
+
+
+##################################
+#                                #
+# Forumla scpecification handler #
+#                                #
+##################################
+
+
+def _split_patsy_products(rhs: str) -> List[str]:
+    out, depth, cur = [], 0, ""
+    for ch in rhs:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "+" and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return [p for p in out if p and p not in ("1", "const", "Intercept")]
+
+
+def _split_terms(rhs: str) -> List[str]:
+    terms, depth, cur = [], 0, ""
+    for ch in rhs:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "+" and depth == 0:
+            terms.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        terms.append(cur.strip())
+    return [t for t in terms if t]
+
+
+def detail_names(varlist: List[str], spec: SimpleNamespace) -> List[str]:
+    names = []
+    for v in varlist:
+        if v in spec.factor_levels:
+            lv = spec.factor_levels[v]
+            ref = spec.references[v]
+            ordered = [ref] + [l for l in lv if l != ref]
+            for l in ordered:
+                names.append(f"{l}.{v}")
+        else:
+            names.append(v)
+    return names
+
+
+def detail_spec(varlist: List[str], spec) -> List[Tuple[str, str | None]]:
+    out = []
+    for v in varlist:
+        if v in spec.factor_levels:
+            ref = spec.references[v]
+            ordered = [ref] + [l for l in spec.factor_levels[v] if l != ref]
+            for l in ordered:
+                out.append((v, l))
+        else:
+            out.append((v, None))
+    return out
 
 
 ##################################
@@ -795,7 +577,7 @@ class Term:
 
 ##################################
 #                                #
-#  Panel Oaxaca-Blinder results  #
+#  Panel Regression results      #
 #                                #
 ##################################
 
@@ -829,18 +611,15 @@ class PanelRegressionResults:
 
     def spec(self, df: pd.DataFrame) -> SimpleNamespace:
         """Build an expanded spec (factor_levels + all-level terms + zero‑padded params)
-        that matches the ordering of the old FormulaSpec from the linearmodels project.
 
         Uses patsy ``dmatrix`` for factor levels/references, then generates every
         factor‑level combination (including reference dummies) exactly as the
-        Stata‑style ``parse_formula`` would.
+        Stata would.
         """
         rhs = self.model.formula.split("~")[1].strip()
         di = dmatrix(rhs, df, return_type="dataframe").design_info
 
-        # --- _clone variable mapping -----------------------------------------
-        # linearmodels often uses ``time_clone`` when ``time`` is an index
-        # level.  Map back so the Stata formula and point dict agree.
+        # TODO rework clone mapping to more suitable time_var
         _clone_map = {}
         if hasattr(self.model, "exog") and self.model.exog is not None:
             idx_names = list(self.model.exog.index.names or [])
@@ -850,7 +629,6 @@ class PanelRegressionResults:
                 if cn and f"{cn}_clone" in df.columns:
                     _clone_map[f"{cn}_clone"] = cn
 
-        # --- factor levels / references via patsy ---------------------------
         factor_levels: dict = {}
         references: dict = {}
         for factor, info in di.factor_infos.items():
@@ -858,15 +636,12 @@ class PanelRegressionResults:
                 continue
             m = _CALL_RE.match(factor.code)
             var = m.group(1) if m else factor.code
-            levels = list(info.categories)  # patsy order
+            levels = list(info.categories)
             ref = levels[0]
-            # Map through _clone_map so downstream code sees the original
-            # column name (matching the point dict keys used downstream).
             mapped = _clone_map.get(var, var)
             references[mapped] = ref
             factor_levels[mapped] = levels
 
-        # --- numeric variables from scanning param names --------------------
         numerics: list = []
         seen_n: set = set()
         for p in map(str, self.params.index):
@@ -876,48 +651,76 @@ class PanelRegressionResults:
             for term in p.split(":"):
                 term = term.strip()
                 if _TERM_RE.fullmatch(term):
-                    continue  # factor part
-                # Map through _clone_map so the numeric variable name
-                # matches the expanded spec and point dict keys.
+                    continue
                 mapped_term = _clone_map.get(term, term)
                 if mapped_term not in seen_n:
                     seen_n.add(mapped_term)
                     numerics.append(mapped_term)
 
-        # --- Build full term list in FormulaSpec order ----------------------
-        # We generate the *same* term expansion as the old Stata‑style
-        # parse_formula: _cons first, then for each top‑level product token
-        # every factor‑level combination (including the reference dummy).
-
-        # 1. Convert the patsy RHS into a list of Stata‑style product tokens
-        #    (same logic as Model.from_result in the old project).
         def _mapvar(v):
             v = v.strip()
             return _clone_map.get(v, v)
 
         products: list = []
         for prod in _split_patsy_products(rhs):
-            toks = []
-            for tok in [t.strip() for t in prod.split("*") if t.strip()]:
-                m = _PTS_C.match(tok)
-                if m:
-                    toks.append(f"i.{_mapvar(m.group(1))}")
-                elif tok not in ("1", "const", "Intercept"):
-                    toks.append(f"c.{_mapvar(tok)}")
-            if toks:
-                products.append("##".join(toks))
+            raw_toks = [t.strip() for t in prod.split("*") if t.strip()]
+
+            # grouped expressions expantion (exp + exp2) into multiple products
+            grouped_indices = [
+                i
+                for i, tok in enumerate(raw_toks)
+                if tok.startswith("(") and tok.endswith(")")
+            ]
+
+            if grouped_indices:
+                # For each group, expand into one sub-product per inner term
+                # Then the outer product becomes a sum of these sub-products
+                expanded_products = [""]
+                for i, tok in enumerate(raw_toks):
+                    if i in grouped_indices:
+                        inner = tok[1:-1].strip()
+                        inner_terms = [s.strip() for s in inner.split("+") if s.strip()]
+                        new_expanded = []
+                        for ep in expanded_products:
+                            for it in inner_terms:
+                                prefix = " * " if ep else ""
+                                new_expanded.append(ep + prefix + it)
+                        expanded_products = new_expanded
+                    else:
+                        prefix = " * " if expanded_products[0] else ""
+                        expanded_products = [
+                            ep + prefix + tok for ep in expanded_products
+                        ]
+
+                for ep in expanded_products:
+                    toks = []
+                    for tok in [t.strip() for t in ep.split(" * ") if t.strip()]:
+                        m = _PTS_C.match(tok)
+                        if m:
+                            toks.append(f"i.{_mapvar(m.group(1))}")
+                        elif tok not in ("1", "const", "Intercept"):
+                            toks.append(f"c.{_mapvar(tok)}")
+                    if toks:
+                        products.append("##".join(toks))
+            else:
+                toks = []
+                for tok in raw_toks:
+                    m = _PTS_C.match(tok)
+                    if m:
+                        toks.append(f"i.{_mapvar(m.group(1))}")
+                    elif tok not in ("1", "const", "Intercept"):
+                        toks.append(f"c.{_mapvar(tok)}")
+                if toks:
+                    products.append("##".join(toks))
         if not products:
             products = ["1"]  # intercept-only fallback
 
         stata_rhs = " + ".join(products)
 
-        # 2. Build the full term list using the same expansion logic as the
-        #    old parse_formula, but factor info comes from dmatrix.
         def _unique_levels_from_spec(var):
             return factor_levels[var]
 
         def _expand_cross(tok):
-            """``a##b##c`` or ``a*b`` → all combos including mains."""
             tok = tok.strip()
             if "##" in tok or "*" in tok:
                 sep = "##" if "##" in tok else "*"
@@ -929,21 +732,16 @@ class PanelRegressionResults:
                 return out
             return [tok]
 
-        # ---- build term_map -------------------------------------------------
         term_map: dict = {}
-        # intercept term (empty factors)
         term_map[()] = ((), "_cons")
 
         for tok in _split_terms(stata_rhs):
             for cross_prod in _expand_cross(tok):
                 for prod in [cross_prod]:
-                    # combos of this product: for each factor part, generate
-                    # ALL levels (including reference)
                     combos = [()]
                     for part in (x.strip() for x in prod.split(":") if x):
                         m = _FACT_PREFIX.match(part)
                         if m and m.group(2).strip() in factor_levels:
-                            # factor variable with i. prefix
                             var = m.group(2).strip()
                             f_list = [
                                 Factor(
@@ -955,7 +753,6 @@ class PanelRegressionResults:
                             var = part[2:]
                             f_list = [Factor("c", var)]
                         elif part in factor_levels:
-                            # bare factor (no prefix, but in factor_levels)
                             var = part
                             f_list = [
                                 Factor(
@@ -987,8 +784,6 @@ class PanelRegressionResults:
 
         full_terms = [Term(factors=fs, name=n) for fs, n in term_map.values()]
 
-        # ---- map patsy param names to positions & build zero‑padded params --
-        # Build a lookup from term key -> index
         def _term_key(t):
             return tuple(
                 sorted(
@@ -1017,13 +812,11 @@ class PanelRegressionResults:
                 m = _TERM_RE.fullmatch(part)
                 if m:
                     var = m.group(1)
-                    # Map through _clone_map (e.g. time_clone → time)
                     var = _clone_map.get(var, var)
                     if var in factor_levels:
                         lvl_str = m.group(2)
                         if lvl_str.startswith("T."):
                             lvl_str = lvl_str[2:]
-                        # resolve level to actual value
                         actual = lvl_str
                         for lv in factor_levels[var]:
                             if str(lv) == str(lvl_str):
@@ -1055,8 +848,6 @@ class PanelRegressionResults:
         )
 
     def terms(self, df: pd.DataFrame) -> list:
-        """Expanded term list (all factor-level combinations including
-        reference dummies), matching ``spec(df).terms``."""
         return self.spec(df).terms
 
     @property
@@ -1072,9 +863,7 @@ class PanelRegressionResults:
     def dep_var(self) -> str:
         return self.model.formula.split("~")[0].strip()
 
-    def design_rows(self, df: pd.DataFrame):
-        """Design matrix for a DataFrame — one column per expanded term,
-        using Factor objects directly (matches old FormulaSpec.design_rows)."""
+    def design_rows(self, df: pd.DataFrame) -> np.ndarray:
         spec = self.spec(df)
         terms = spec.terms
         n = len(df)
@@ -1091,8 +880,8 @@ class PanelRegressionResults:
 
     def partial(self, df: pd.DataFrame, var: str, point: dict, level=None) -> float:
         spec = self.spec(df)
-        terms = spec.terms  # expanded terms (108 in the example)
-        params = spec.params  # expanded params, zeros for ref dummies
+        terms = spec.terms
+        params = spec.params
 
         if var in spec.factor_levels:
             if level is None:
@@ -1115,7 +904,6 @@ class PanelRegressionResults:
         return float(acc)
 
     def predict_at(self, df: pd.DataFrame, point: dict) -> float:
-        """Linear prediction at *point* using the expanded spec."""
         spec = self.spec(df)
         return float(
             np.dot(spec.params, np.array([t.value_at(point) for t in spec.terms]))
@@ -1123,8 +911,7 @@ class PanelRegressionResults:
 
     def reffects(self, df: pd.DataFrame) -> np.ndarray:
         spec = self.spec(df)
-        params = spec.params  # expanded params, zeros for ref dummies
-        n_terms = len(spec.terms)
+        params = spec.params
 
         reffects = None
         if self.method == "re":
@@ -1160,6 +947,13 @@ class PanelRegressionResults:
         return reffects
 
 
+##################################
+#                                #
+#  Panel Oaxaca-Blinder results  #
+#                                #
+##################################
+
+
 class PanelOaxacaResults:
     def __init__(self, **kw):
         for k, v in kw.items():
@@ -1182,12 +976,10 @@ class PanelOaxacaResults:
             M = comps[cname]
             P = comps.get("perc_" + cname)
             if M is None or M.ndim != 2:
-                # kim D1 has shape (1, T): detail rows empty
                 continue
             m = M.shape[0]
             detail_n = m - 2
             if detail_n < n:
-                # matrix with fewer detail rows (kim D1..): pad
                 pass
             for t in range(T):
                 vals = {}
@@ -1222,13 +1014,8 @@ class PanelOaxacaResults:
                     rows.append(dict(vals))
         return rows
 
+    @property
     def resultsdata(self):
-        """Long DataFrame, Stata resultsdata() layout.
-
-        Columns: [detail cols..., Total, time, Intercept, component,
-        percentage, type] + `re` if RE model + `bs` if bootstrapped.
-        Change blocks first (in requested order), then level block.
-        """
         all_rows = []
         for cname, comps in self.change.items():
             all_rows.extend(self._block_rows(comps, cname))
@@ -1253,8 +1040,6 @@ class PanelOaxacaResults:
         return df[order]
 
     def _fmt_row(self, label, values):
-        """One report row: left label + right-aligned 3-decimal value columns
-        (missing values printed as a centered dot, Stata style)."""
         cells = []
         for v in values:
             try:
@@ -1269,9 +1054,6 @@ class PanelOaxacaResults:
         return "%-26s" % _trunc(label) + "".join(cells)
 
     def _observed_gap(self):
-        """Non-parametric group gap per time: windowed (aweight-) mean of the
-        dependent variable for group A minus group B, over (t-bw, t+bw].
-        This equals the sum of the decomposition components (verified)."""
         y = self.model.dep_var
         df, gv, tv = self.df, self.groupvar, self.time_var
         a, b = self.groupcat
@@ -1304,9 +1086,6 @@ class PanelOaxacaResults:
         out.append(sep)
 
     def summary(self):
-        """Render the Stata-style decomposition report (mirrors the .ado output:
-        'Decomposition of Levels' then 'Decomposition of Change' per change type,
-        with Level / Decomp / Decomp % groups and the RE note + citation)."""
         SEP = "\u2500" * 68
         out = []
         gap = self._observed_gap()
@@ -1399,7 +1178,8 @@ class PanelOaxacaResults:
                     continue
                 prow = np.asarray(ch["perc_" + key], float)[-1]
                 out.append(self._fmt_row(lbl, prow))
-                ptot = ptot + prow
+                if key in leaves:
+                    ptot = ptot + prow
             if reflag:
                 with np.errstate(invalid="ignore", divide="ignore"):
                     pre_c = np.where(tot != 0, dref / tot * 100.0, np.nan)
@@ -1415,6 +1195,163 @@ class PanelOaxacaResults:
                     "For an explanation of this change decomposition, please see:"
                 )
                 out.append(cite)
+            out.append("")
+
+        return "\n".join(out)
+
+    def _latex_val(self, v, nd=3):
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            return "."
+        if not np.isfinite(fv):
+            return "."
+        return f"{fv:.{nd}f}"
+
+    def _latex_row(self, label, values, nd=3):
+        cells = " & ".join(self._latex_val(v, nd) for v in values)
+        return rf"{label} & {cells} \\"
+
+    def _latex_header(self, out):
+        T = len(self.times)
+        cols = "l" + "c" * T
+        out.append(r"\begin{tabular}{" + cols + "}")
+        out.append(r"\toprule")
+        time_header = " & ".join(str(_timestr(t)) for t in self.times)
+        out.append(
+            r" & \multicolumn{" + str(T) + r"}{c}{" + str(self.time_var) + r"} \\"
+        )
+        out.append(r"\cmidrule{2-" + str(T + 1) + "}")
+        out.append(r" & " + time_header + r" \\")
+        out.append(r"\midrule")
+
+    def _latex_footer(self, out):
+        out.append(r"\bottomrule")
+        out.append(r"\end{tabular}")
+        out.append(r"")
+
+    def summary_as_latex(self, nd=3):
+        out = []
+        gap = self._observed_gap()
+        r = self.times.index(self.timeref)
+        change_gap = gap - gap[r]
+        refe = getattr(self, "refe", "")
+        reflag = "RE" if refe == "re" else ("FE" if refe == "fe" else None)
+        re_note = {"re": "RE = random effects.", "fe": "FE = fixed effects."}.get(
+            refe, ""
+        )
+        T = len(self.times)
+
+        if self.level is not None:
+            lv = self.level
+            out.append(r"\begin{table}[htbp]")
+            out.append(r"\centering")
+            out.append(r"\caption{Decomposition of Levels}")
+            self._latex_header(out)
+            out.append(r"\textit{Level} \\")
+            out.append(self._latex_row(r"\quad non-parametric", gap, nd))
+            out.append(r"\midrule")
+            out.append(r"\textit{Decomp} \\")
+            parts = (
+                [
+                    ("endowment", "Endowments"),
+                    ("coefficient", "Coefficients"),
+                    ("coefficient_endowment_interaction", "Interaction"),
+                ]
+                if "coefficient_endowment_interaction" in lv
+                else [("explained", "Explained"), ("unexplained", "Unexplained")]
+            )
+            for key, lbl in parts:
+                out.append(
+                    self._latex_row(r"\quad " + lbl, np.asarray(lv[key], float)[-1], nd)
+                )
+            re_row = np.atleast_1d(np.asarray(lv.get("RE", np.zeros(T)), float))[0]
+            total = np.atleast_1d(np.asarray(lv["Total"], float))[0]
+            if reflag:
+                out.append(self._latex_row(r"\quad " + reflag, re_row, nd))
+            out.append(self._latex_row(r"\textit{Total}", total, nd))
+            out.append(r"\midrule")
+            out.append(r"\textit{Decomp \%} \\")
+            if reflag:
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    pre = np.where(total != 0, re_row / total * 100.0, np.nan)
+            for key, lbl in parts:
+                out.append(
+                    self._latex_row(
+                        r"\quad " + lbl, np.asarray(lv["perc_" + key], float)[-1], nd
+                    )
+                )
+            if reflag:
+                out.append(self._latex_row(r"\quad " + reflag, pre, nd))
+            ptot = np.zeros(T)
+            for key, _ in parts:
+                ptot = ptot + np.asarray(lv["perc_" + key], float)[-1]
+            if reflag:
+                ptot = ptot + pre
+            out.append(self._latex_row(r"\textit{Total \%}", ptot, nd))
+            self._latex_footer(out)
+            if re_note:
+                out.append(r"\small{" + re_note + "}")
+            out.append(r"\end{table}")
+            out.append("")
+
+        for cname, ch in self.change.items():
+            comppairs = CHANGE_COMP_LABELS.get(
+                cname, [(k, k.replace("_", " ")) for k in _leaf_keys(ch, cname)]
+            )
+            leaves = _leaf_keys(ch, cname)
+            out.append(r"\begin{table}[htbp]")
+            out.append(r"\centering")
+            out.append(
+                r"\caption{Decomposition of Change --- "
+                + cname.replace("_", " ").title()
+                + "}"
+            )
+            self._latex_header(out)
+            out.append(r"\textit{Change} \\")
+            out.append(self._latex_row(r"\quad non-parametric", change_gap, nd))
+            out.append(r"\midrule")
+            out.append(r"\textit{Decomp} \\")
+            for key, lbl in comppairs:
+                if key not in ch:
+                    continue
+                out.append(
+                    self._latex_row(r"\quad " + lbl, np.asarray(ch[key], float)[-1], nd)
+                )
+            dref = (
+                np.atleast_1d(np.asarray(ch.get("RE", np.zeros(T)), float))[0]
+                if reflag
+                else None
+            )
+            if reflag:
+                out.append(self._latex_row(r"\quad " + reflag, dref, nd))
+            tot = sum(np.asarray(ch[k], float)[-1] for k in leaves)
+            if reflag:
+                tot = tot + dref
+            out.append(self._latex_row(r"\textit{Total}", tot, nd))
+            out.append(r"\midrule")
+            out.append(r"\textit{Decomp \%} \\")
+            ptot = np.zeros(T)
+            for key, lbl in comppairs:
+                if key not in ch:
+                    continue
+                prow = np.asarray(ch["perc_" + key], float)[-1]
+                out.append(self._latex_row(r"\quad " + lbl, prow, nd))
+                if key in leaves:
+                    ptot = ptot + prow
+            if reflag:
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    pre_c = np.where(tot != 0, dref / tot * 100.0, np.nan)
+                out.append(self._latex_row(r"\quad " + reflag, pre_c, nd))
+                ptot = ptot + pre_c
+            out.append(self._latex_row(r"\textit{Total \%}", ptot, nd))
+            self._latex_footer(out)
+            if re_note:
+                out.append(r"\small{" + re_note + "}")
+            cite = CITATIONS.get(cname)
+            if cite:
+                out.append(r"\small{\textit{Source:} " + cite + "}")
+            out.append(r"\end{table}")
             out.append("")
 
         return "\n".join(out)

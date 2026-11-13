@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 COMPONENT_NAMES = {
-    "interventioninst": ["delta_E", "delta_C", "delta_CE"],
+    "interventionist": ["delta_E", "delta_C", "delta_CE"],
     "ssm": ["delta_E", "delta_C", "delta_CE"],
     "kim": ["kim_D1m", "kim_D2m", "kim_D3m", "kim_D4m", "kim_D5m"],
     "smithwelch": ["sw_1", "sw_2", "sw_3", "sw_4"],
@@ -103,7 +103,7 @@ def levels_2fold(
 
     coefs_star = W * cA + (ones - W) * cB
     explained_means = (mA - mB) * coefs_star
-    unexplained_means = ((ones - W) * mA + W * mB) * (cA + cB)
+    unexplained_means = ((ones - W) * mA + W * mB) * (cA - cB)
 
     total = explained_means.sum(axis=0) + unexplained_means.sum(axis=0) + refrow
     explained, perc_explained = _finilize(explained_means, total)
@@ -229,23 +229,27 @@ def change_kim(
     kim_D1m = np.atleast_2d(
         (cA[n_decvars, :] - cA[n_decvars, r]) - (cB[n_decvars, :] - cB[n_decvars, r])
     )
-    kim_D2m = (
-        (cA_d - cA_r[:, None])
-        - (cB_d - cB_r[:, None]) * (mA_d - mA_r[:, None])
-        + (cB_d - cB_r[:, None]) / 4
-    )
+    # D2: Pure Coefficient Effect
+    # (ΔcA - ΔcB) * ((mA + mA_r) + (mB + mB_r)) / 4
+    kim_D2m = ((cA_d - cA_r[:, None]) - (cB_d - cB_r[:, None])) * (
+        (mA_d + mA_r[:, None]) + (mB_d + mB_r[:, None])
+    ) / 4
+    # D3: Coefficient Interaction Effect
+    # ((cA + cA_r)/2 - (cB + cB_r)/2) * ((mA - mA_r) + (mB - mB_r)) / 2
     kim_D3m = (
-        ((cA_d - cA_r[:, None]) / 2 - (cB_d - cB_r[:, None]) / 2)
-        * ((mA_d - mA_r[:, None]) + (cB_d - cB_r[:, None]))
+        ((cA_d + cA_r[:, None]) / 2 - (cB_d + cB_r[:, None]) / 2)
+        * ((mA_d - mA_r[:, None]) + (mB_d - mB_r[:, None]))
         / 2
     )
-    kim_D4m = (
-        ((mA_d - mA_r[:, None]) - (mB_d - mB_r[:, None]))
-        * ((cA_d - cA_r[:, None]) + (cB_d - cB_r[:, None]))
-        / 4
-    )
+    # D4: Pure Endowment Effect
+    # (ΔmA - ΔmB) * ((cA + cA_r) + (cB + cB_r)) / 4
+    kim_D4m = ((mA_d - mA_r[:, None]) - (mB_d - mB_r[:, None])) * (
+        (cA_d + cA_r[:, None]) + (cB_d + cB_r[:, None])
+    ) / 4
+    # D5: Endowment Interaction Effect
+    # ((mA + mA_r)/2 - (mB + mB_r)/2) * ((cA - cA_r) + (cB - cB_r)) / 2
     kim_D5m = (
-        ((mA_d - mA_r[:, None]) / 2 - (mB_d - mB_r[:, None]) / 2)
+        ((mA_d + mA_r[:, None]) / 2 - (mB_d + mB_r[:, None]) / 2)
         * ((cA_d - cA_r[:, None]) + (cB_d - cB_r[:, None]))
         / 2
     )
@@ -269,18 +273,19 @@ def change_kim(
     kim_D4m = _with_total(kim_D4m)
     kim_D5m = _with_total(kim_D5m)
 
-    return {
-        "kim_D1m": kim_D1m,
-        "kim_D2m": kim_D2m,
-        "kim_D3m": kim_D3m,
-        "kim_D4m": kim_D4m,
-        "kim_D5m": kim_D5m,
-        "perc_kim_D1m": kim_D1m / total * 100.0,
-        "perc_kim_D2m": kim_D2m / total * 100.0,
-        "perc_kim_D3m": kim_D3m / total * 100.0,
-        "perc_kim_D4m": kim_D4m / total * 100.0,
-        "perc_kim_D5m": kim_D5m / total * 100.0,
-    }
+    with np.errstate(invalid="ignore"):
+        return {
+            "kim_D1m": kim_D1m,
+            "kim_D2m": kim_D2m,
+            "kim_D3m": kim_D3m,
+            "kim_D4m": kim_D4m,
+            "kim_D5m": kim_D5m,
+            "perc_kim_D1m": kim_D1m / total * 100.0,
+            "perc_kim_D2m": kim_D2m / total * 100.0,
+            "perc_kim_D3m": kim_D3m / total * 100.0,
+            "perc_kim_D4m": kim_D4m / total * 100.0,
+            "perc_kim_D5m": kim_D5m / total * 100.0,
+        }
 
 
 def change_smithwelch(
@@ -359,24 +364,21 @@ def change_mpjd(
     endowment_price, perc_endowment_price = _finilize(endowment_price, total)
     coefficient_pure, perc_coefficient_pure = _finilize(coefficient_pure, total)
     coefficient_price, perc_coefficient_price = _finilize(coefficient_price, total)
-    return {
-        "endowment_pure": endowment_pure,
-        "endowment_price": endowment_price,
-        "coefficient_pure": coefficient_pure,
-        "coefficient_price": coefficient_price,
-        "coefficient_total": endowment_pure + endowment_price,
-        "coefficient_total": coefficient_pure + coefficient_price,
-        "perc_endowment_pure": perc_endowment_pure,
-        "perc_endowment_price": perc_endowment_price,
-        "perc_coefficient_pure": perc_coefficient_pure,
-        "perc_coefficient_price": perc_coefficient_price,
-        "perc_endowment_total": (perc_endowment_pure + perc_endowment_price)
-        / total
-        * 100,
-        "perc_coefficient_total": (perc_coefficient_pure + perc_coefficient_price)
-        / total
-        * 100,
-    }
+    with np.errstate(invalid="ignore"):
+        return {
+            "endowment_pure": endowment_pure,
+            "endowment_price": endowment_price,
+            "coefficient_pure": coefficient_pure,
+            "coefficient_price": coefficient_price,
+            "endowment_total": endowment_pure + endowment_price,
+            "coefficient_total": coefficient_pure + coefficient_price,
+            "perc_endowment_pure": perc_endowment_pure,
+            "perc_endowment_price": perc_endowment_price,
+            "perc_coefficient_pure": perc_coefficient_pure,
+            "perc_coefficient_price": perc_coefficient_price,
+            "perc_endowment_total": (endowment_pure + endowment_price) / total * 100.0,
+            "perc_coefficient_total": (coefficient_pure + coefficient_price) / total * 100.0,
+        }
 
 
 def change_wellington(

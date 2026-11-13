@@ -26,7 +26,6 @@ from .utils import (
     calc_means,
     detail_names,
     get_model_method,
-    spec_from_res,
 )
 
 CHANGE_ORDER = [
@@ -56,14 +55,14 @@ def panel_oaxaca(
     tfweight: float = 0.5,
     nolevels: bool = False,
     nochange: bool = False,
-    detail: bool = False,
+    # detail: bool = False,
     normalize: Union[str, List[str]] | None = None,
     weights: pd.Series | None = None,
-    force_sample: bool = False,
-    seed: int | None = None,
+    # force_sample: bool = False,
+    # seed: int | None = None,
     rep: int = 100,
     factor_vars: List[str] | None = None,
-) -> None:
+) -> PanelOaxacaResults:
     _id_var = _time_var = None
     if isinstance(df.index, pd.MultiIndex):
         _id_var = df.index.names[0]
@@ -76,7 +75,7 @@ def panel_oaxaca(
         raise ValueError(f"timeref({timeref!r}) not in times {times}")
 
     model = PanelRegressionResults(model)
-    spec = spec_from_res(model, df)
+    spec = model.spec(df=df)
 
     r = times.index(timeref)
 
@@ -183,7 +182,7 @@ def panel_oaxaca(
         parts = (
             ["endowment", "coefficient", "coefficient_endowment_interaction"]
             if "coefficient_endowment_interaction" in level_comps
-            else ["endowment", "coefficient"]
+            else ["explained", "unexplained"]
         )
         tot = sum(level_comps[p][n + 1] for p in parts)
         tot = tot + refrow
@@ -208,9 +207,6 @@ def panel_oaxaca(
                 changes[cname] = change_interventionist(
                     meansA, meansB, coefsA, coefsB, r, refrow
                 )
-                # Consume the RE change the function already computed (the
-                # faithful image of row 2 of Stata's drefmat) instead of
-                # duplicating `_dref` here.
                 changes[cname]["RE"] = changes[cname].pop("drefmat")
             elif cname == "ssm":
                 changes[cname] = change_ssm(meansA, meansB, coefsA, coefsB, r, refrow)
@@ -222,17 +218,15 @@ def panel_oaxaca(
                 changes[cname]["RE"] = drefrow.reshape(1, -1)
             elif cname == "smithwelch":
                 changes[cname] = change_smithwelch(
-                    meansA, meansB, coefsA, coefsB, r, n, refrow
+                    meansA, meansB, coefsA, coefsB, r, refrow
                 )
                 changes[cname]["RE"] = drefrow.reshape(1, -1)
             elif cname == "mpjd":
-                changes[cname] = change_mpjd(
-                    meansA, meansB, coefsA, coefsB, r, n, refrow
-                )
+                changes[cname] = change_mpjd(meansA, meansB, coefsA, coefsB, r, refrow)
                 changes[cname]["RE"] = drefrow.reshape(1, -1)
             elif cname == "wellington":
                 changes[cname] = change_wellington(
-                    meansA, meansB, coefsA, coefsB, r, n, refrow
+                    meansA, meansB, coefsA, coefsB, r, refrow
                 )
                 changes[cname]["RE"] = drefrow.reshape(1, -1)
             elif cname == "interventionist_twofold":

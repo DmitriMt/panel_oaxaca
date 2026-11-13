@@ -48,6 +48,11 @@ res = panel_oaxaca(varlist=['exp', 'edu'], df=example1, model=model, groupvar='g
 print(res.summary())
 ```
 
+to export the result to LaTeX `summary_as_latex()` method is useful
+```python
+print(res.summary_as_latex())
+```
+
 ## Thank you 
 to [Jörg Hartmann](@jhart) for conducting your research and for publishing Stata code!
 
