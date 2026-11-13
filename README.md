@@ -28,7 +28,7 @@ pip install git+https://github.com/DmitriMt/panel_oaxaca.git
 ```
 or via PyPi
 ```bash
-pip install ... (to be filled)
+pip install panel-oaxaca
 ```
 
 ## Quickstart
