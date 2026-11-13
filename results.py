@@ -19,6 +19,7 @@ from .decomp import (
 )
 from .utils import (
     PanelOaxacaResults,
+    PanelRegressionResults,
     _refmat,
     _to_list,
     calc_coefficients,
@@ -45,7 +46,7 @@ def panel_oaxaca(
     model: Any,
     groupvar: str,
     groupcat: str,
-    timevar: str,
+    time_var: str,
     times: List[int],
     basemodel: Any | None = None,
     timeref: int | None = None,
@@ -74,22 +75,22 @@ def panel_oaxaca(
     if timeref not in times:
         raise ValueError(f"timeref({timeref!r}) not in times {times}")
 
+    model = PanelRegressionResults(model)
     spec = spec_from_res(model, df)
 
     r = times.index(timeref)
 
     _nm, meansA, meansB, sdA, sdB = calc_means(
         df=df,
+        varlist=varlist,
         model=model,
         groupvar=groupvar,
         groupcat=groupcat,
-        timevar=timevar,
+        time_var=time_var,
         times=times,
         timebandwidth=timebandwidth,
         weights=weights,
     )
-
-    print(f"DEBUG meansA, meansB, sdA, sdB {(_nm, meansA, meansB, sdA, sdB)}")
 
     atvars = True
     coefsA, coefsB = calc_coefficients(
@@ -99,7 +100,7 @@ def panel_oaxaca(
         varlist=varlist,
         groupvar=groupvar,
         groupcat=groupcat,
-        timevar=timevar,
+        time_var=time_var,
         times=times,
         atvars=atvars,
         meansA=meansA,
@@ -158,7 +159,6 @@ def panel_oaxaca(
     )
     re = get_model_method(model) in ("re", "mixed")
     refrow = refmat[1] if re else np.zeros(T)
-
     use_twofold = twofold in ("twofold", "weight", "pooled")
 
     level_comps = {}
@@ -174,11 +174,11 @@ def panel_oaxaca(
                 )
         else:
             level_comps = levels_3fold(meansA, meansB, coefsA, coefsB, refrow)
+
         n = meansA.shape[0] - 1
         if re:
             level_comps["RE"] = refrow.reshape(1, -1)
             level_comps["pRE"] = np.full_like(refrow, np.nan).reshape(1, -1)
-        print(f"DEBUG level_comps: {level_comps}")
 
         parts = (
             ["endowment", "coefficient", "coefficient_endowment_interaction"]
@@ -195,7 +195,6 @@ def panel_oaxaca(
         change_list = _to_list(change) or (
             ["interventionist"] if not nochange else None
         )
-        change_list = []
         if change is None and not nochange:
             change_list = ["interventionist"]
         elif nochange:
@@ -256,6 +255,7 @@ def panel_oaxaca(
                         M = M.copy()
                         M[:, r] = np.nan
                         changes[cname][k] = M
+
     res = PanelOaxacaResults(
         varlist=varlist,
         names=names,
@@ -263,7 +263,7 @@ def panel_oaxaca(
         timeref=timeref,
         groupvar=groupvar,
         groupcat=groupcat,
-        timevar=timevar,
+        time_var=time_var,
         level=level_comps if not nolevels else None,
         change=changes,
         meansA=meansA,
@@ -285,7 +285,7 @@ def panel_oaxaca(
         varlist=varlist,
         groupvar=groupvar,
         groupcat=groupcat,
-        timevar=timevar,
+        time_var=time_var,
         times=times,
         timeref=timeref,
         timebandwidth=timebandwidth,

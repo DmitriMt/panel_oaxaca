@@ -57,26 +57,26 @@ def levels_3fold(
 
     endowment_means = (mA - mB) * cB
     coefficient_means = mB * (cA - cB)
-    coefficient_endowment_interacton_means = (mA - mB) * (cA - cB)
+    coefficient_endowment_interaction_means = (mA - mB) * (cA - cB)
 
     total = (
         endowment_means.sum(axis=0)
         + coefficient_means.sum(axis=0)
-        + coefficient_endowment_interacton_means.sum(axis=0)
+        + coefficient_endowment_interaction_means.sum(axis=0)
         + refrow
     )
     endowment, perc_endowment = _finilize(endowment_means, total)
     coefficient, perc_coefficient = _finilize(coefficient_means, total)
-    coefficient_endowment_interacton, perc_coefficient_endowment_interacton = _finilize(
-        coefficient_endowment_interacton_means, total
+    coefficient_endowment_interaction, perc_coefficient_endowment_interaction = (
+        _finilize(coefficient_endowment_interaction_means, total)
     )
     return {
         "endowment": endowment,
         "coefficient": coefficient,
-        "coefficient_endowment_interaction": coefficient_endowment_interacton,
+        "coefficient_endowment_interaction": coefficient_endowment_interaction,
         "perc_endowment": perc_endowment,
         "perc_coefficient": perc_coefficient,
-        "perc_coefficient_endowment_interacton": perc_coefficient_endowment_interacton,
+        "perc_coefficient_endowment_interaction": perc_coefficient_endowment_interaction,
     }
 
 
@@ -141,7 +141,7 @@ def change_interventionist(
     delta_coefficient = (cA - cA_r[:, None]) * mA_r[:, None] - (
         cB - cB_r[:, None]
     ) * mB_r[:, None]
-    delta_coefficient_endowment_interacton = (mA - mA_r[:, None]) * (
+    delta_coefficient_endowment_interaction = (mA - mA_r[:, None]) * (
         cA - cA_r[:, None]
     ) - (mB - mB_r[:, None]) * (cB - cB_r[:, None])
 
@@ -149,13 +149,13 @@ def change_interventionist(
     total = (
         delta_endowment.sum(axis=0)
         + delta_coefficient.sum(axis=0)
-        + delta_coefficient_endowment_interacton.sum(axis=0)
+        + delta_coefficient_endowment_interaction.sum(axis=0)
         + dref
     )
 
     delta_E, perc_delta_E = _finilize(delta_endowment, total)
     delta_C, perc_delta_C = _finilize(delta_coefficient, total)
-    delta_CE, perc_delta_CE = _finilize(delta_coefficient_endowment_interacton, total)
+    delta_CE, perc_delta_CE = _finilize(delta_coefficient_endowment_interaction, total)
     return {
         "delta_E": delta_E,
         "delta_C": delta_C,
@@ -180,25 +180,25 @@ def change_ssm(
 
     endowment_means = (mA - mB) * cB
     coefficient_means = mB * (cA - cB)
-    coefficient_endowment_interacton_means = (mA - mB) * (cA - cB)
+    coefficient_endowment_interaction_means = (mA - mB) * (cA - cB)
     delta_endowment = endowment_means - endowment_means[:, r][:, None]
     delta_coefficient = coefficient_means - coefficient_means[:, r][:, None]
-    delta_coefficient_endowment_interacton = (
-        coefficient_endowment_interacton_means
-        - coefficient_endowment_interacton_means[:, r][:, None]
+    delta_coefficient_endowment_interaction = (
+        coefficient_endowment_interaction_means
+        - coefficient_endowment_interaction_means[:, r][:, None]
     )
 
     dref = _dref(refrow, r)
     total = (
         delta_endowment.sum(axis=0)
         + delta_coefficient.sum(axis=0)
-        + delta_coefficient_endowment_interacton.sum(axis=0)
+        + delta_coefficient_endowment_interaction.sum(axis=0)
         + dref
     )
 
     delta_E, perc_delta_E = _finilize(delta_endowment, total)
     delta_C, perc_delta_C = _finilize(delta_coefficient, total)
-    delta_CE, perc_delta_CE = _finilize(delta_coefficient_endowment_interacton, total)
+    delta_CE, perc_delta_CE = _finilize(delta_coefficient_endowment_interaction, total)
     return {
         "delta_E": delta_E,
         "delta_C": delta_C,
