@@ -1,4 +1,4 @@
-# Logitudal Oaxaca-Blinder decomposition
+# Panel Oaxaca-Blinder decomposition
 
 Dynamic Kitagawa-Oaxaca-Bliender decomposition of **levels** and **change in a group gap**. This is a Python port of the Stata `xtoaxaca` program written by [Jörg Hartmann](@https://gitlab.com/jhart) and [xtoaxaca](https://gitlab.com/jhart/xtoaxaca). Additionally [linearmodels](https://github.com/bashtage/linearmodels.git). The project extends original Kitagawa-Oaxaca-Blinder's approach decomposition to repeated cross-sectional or panel data.
 
